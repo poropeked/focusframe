@@ -84,12 +84,15 @@ func NewFocusFrame() *FocusFrame {
 		captureStatus:  "Готов к работе",
 	}
 
-	// Получаем ID окна приложения через xdotool
+	// Асинхронно получаем ID окна приложения с использованием --class
 	go func() {
-		time.Sleep(1 * time.Second)
-		out, err := exec.Command("xdotool", "search", "--name", "FocusFrame").Output()
-		if err == nil && len(out) > 0 {
-			ff.appWindowID = strings.TrimSpace(string(out))
+		for i := 0; i < 5; i++ {
+			time.Sleep(1 * time.Second)
+			out, err := exec.Command("xdotool", "search", "--onlyvisible", "--class", "focusframe").Output()
+			if err == nil && len(out) > 0 {
+				ff.appWindowID = strings.TrimSpace(string(out))
+				break
+			}
 		}
 	}()
 
@@ -294,6 +297,10 @@ func (ff *FocusFrame) selectWindow() {
 		ff.captureStatus = "Ошибка выбора окна или отмена (Esc)"
 		ff.updateInfoLabel()
 		ff.window.Show()
+		// Восстанавливаем состояние "поверх всех", если оно было активно
+		if ff.onTop && ff.appWindowID != "" {
+			go ff.restoreOnTop()
+		}
 		return
 	}
 
@@ -314,6 +321,10 @@ func (ff *FocusFrame) selectWindow() {
 	ff.selectWinBtn.Refresh()
 	ff.selectAreaBtn.Enable() // Активируем кнопку "Выделить" после выбора окна
 	ff.window.Show()
+	// Восстанавливаем состояние "поверх всех", если оно было активно
+	if ff.onTop && ff.appWindowID != "" {
+		go ff.restoreOnTop()
+	}
 }
 
 func (ff *FocusFrame) selectArea() {
@@ -331,6 +342,10 @@ func (ff *FocusFrame) selectArea() {
 		ff.captureStatus = "Ошибка выделения области или отмена (Esc)"
 		ff.updateInfoLabel()
 		ff.window.Show()
+		// Восстанавливаем состояние "поверх всех", если оно было активно
+		if ff.onTop && ff.appWindowID != "" {
+			go ff.restoreOnTop()
+		}
 		return
 	}
 
@@ -339,6 +354,10 @@ func (ff *FocusFrame) selectArea() {
 		ff.captureStatus = "Некорректные данные от slop"
 		ff.updateInfoLabel()
 		ff.window.Show()
+		// Восстанавливаем состояние "поверх всех", если оно было активно
+		if ff.onTop && ff.appWindowID != "" {
+			go ff.restoreOnTop()
+		}
 		return
 	}
 
@@ -370,6 +389,10 @@ func (ff *FocusFrame) selectArea() {
 	ff.selectAreaBtn.Refresh()
 	ff.toggleBtn.Enable() // Активируем кнопку "Старт" после выделения области
 	ff.window.Show()
+	// Восстанавливаем состояние "поверх всех", если оно было активно
+	if ff.onTop && ff.appWindowID != "" {
+		go ff.restoreOnTop()
+	}
 }
 
 func (ff *FocusFrame) toggleCapture() {
@@ -380,7 +403,7 @@ func (ff *FocusFrame) toggleCapture() {
 		ff.toggleBtn.Text = "Старт"
 		ff.toggleBtn.Icon = theme.MediaRecordIcon()
 		ff.captureStatus = "Захват остановлен"
-		ff.screenshotBtn.Disable() // Деактивируем кнопку "Скриншот" при остановке
+		ff.screenshotBtn.Disable()
 		ff.screenshotHiddenBtn.Disable()
 	} else {
 		if len(ff.region) == 0 {
@@ -393,7 +416,7 @@ func (ff *FocusFrame) toggleCapture() {
 		ff.toggleBtn.Text = "Стоп"
 		ff.toggleBtn.Icon = theme.MediaStopIcon()
 		ff.captureStatus = "Захват запущен"
-		ff.screenshotBtn.Enable() // Активируем кнопку "Скриншот" при запуске
+		ff.screenshotBtn.Enable()
 		ff.screenshotHiddenBtn.Enable()
 		go ff.updateImageLoop()
 	}
@@ -404,28 +427,30 @@ func (ff *FocusFrame) toggleCapture() {
 func (ff *FocusFrame) toggleOnTop() {
 	ff.onTop = !ff.onTop
 	if ff.onTop {
-		if ff.appWindowID != "" {
-			go func() {
+		go func() {
+			if ff.appWindowID != "" {
 				err := exec.Command("wmctrl", "-i", "-r", ff.appWindowID, "-b", "add,above").Run()
 				if err != nil {
 					ff.captureStatus = "Ошибка установки 'Поверх всех': " + err.Error()
 				} else {
 					err = exec.Command("xdotool", "windowactivate", ff.appWindowID).Run()
 					if err != nil {
+						ff.captureStatus = "Ошибка активации окна: " + err.Error()
 					} else {
 						ff.captureStatus = "Установлено 'Поверх всех'"
 					}
 				}
 				ff.updateInfoLabel()
-			}()
-		} else {
-			ff.captureStatus = "ID окна не определён для 'Поверх всех'"
-		}
+			} else {
+				ff.captureStatus = "ID окна не определён для 'Поверх всех'"
+				ff.updateInfoLabel()
+			}
+		}()
 		ff.onTopBtn.Text = "Поверх всех"
 		ff.onTopBtn.Icon = theme.NavigateNextIcon()
 	} else {
-		if ff.appWindowID != "" {
-			go func() {
+		go func() {
+			if ff.appWindowID != "" {
 				err := exec.Command("wmctrl", "-i", "-r", ff.appWindowID, "-b", "remove,above").Run()
 				if err != nil {
 					ff.captureStatus = "Ошибка снятия 'Поверх всех': " + err.Error()
@@ -433,13 +458,33 @@ func (ff *FocusFrame) toggleOnTop() {
 					ff.captureStatus = "Установлено 'Обычное'"
 				}
 				ff.updateInfoLabel()
-			}()
-		}
+			} else {
+				ff.captureStatus = "ID окна не определён для снятия 'Поверх всех'"
+				ff.updateInfoLabel()
+			}
+		}()
 		ff.onTopBtn.Text = "Обычное"
 		ff.onTopBtn.Icon = theme.NavigateBackIcon()
 	}
-	ff.updateInfoLabel()
-	ff.onTopBtn.Refresh() // Исправлено с toggleOnTopBtn на onTopBtn
+	ff.onTopBtn.Refresh()
+}
+
+// Новая функция для восстановления состояния "поверх всех"
+func (ff *FocusFrame) restoreOnTop() {
+	if ff.appWindowID != "" {
+		err := exec.Command("wmctrl", "-i", "-r", ff.appWindowID, "-b", "add,above").Run()
+		if err != nil {
+			ff.captureStatus = "Ошибка восстановления 'Поверх всех': " + err.Error()
+		} else {
+			err = exec.Command("xdotool", "windowactivate", ff.appWindowID).Run()
+			if err != nil {
+				ff.captureStatus = "Ошибка активации окна: " + err.Error()
+			} else {
+				ff.captureStatus = "Установлено 'Поверх всех'"
+			}
+		}
+		ff.updateInfoLabel()
+	}
 }
 
 func (ff *FocusFrame) toggleTheme() {
