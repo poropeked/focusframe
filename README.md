@@ -19,7 +19,7 @@ sudo apt install xdotool slop wmctrl
 ## Установка
 1. Клонируйте репозиторий или скачайте исходный код:
 ```bash
-git clone <repository-url>
+git clone https://github.com/poropeked/focusframe.git
 cd focusframe
 ```
 2. Соберите программу с помощью make:
